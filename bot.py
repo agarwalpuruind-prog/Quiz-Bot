@@ -8,7 +8,7 @@ import csv
 import io
 from flask import Flask
 
-TOKEN = '8632941188:AAH2EgsvOiR-QtoZ9jRWvqAt_UC_TNL5X3w' 
+TOKEN = '8632941188:AAFYQvnBUO8jhqvbE5MA_8M06q0daQ0_sjs' 
 bot = telebot.TeleBot(TOKEN)
 
 TARGET_GROUP = '@authentic_info_2025_group'  
