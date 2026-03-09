@@ -8,14 +8,15 @@ import csv
 import io
 from flask import Flask
 
+# ⚠️ यहाँ अपना NAYA वाला Token डालें जो अभी BotFather से लिया था
 TOKEN = '8632941188:AAFYQvnBUO8jhqvbE5MA_8M06q0daQ0_sjs' 
 bot = telebot.TeleBot(TOKEN)
 
-TARGET_GROUP = '@authentic_info_2025_group'  
+# अब TARGET_GROUP की कोई ज़रूरत नहीं!
 PROMO_CHANNEL = '@authentic_info_2025'       
 SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQaiENWJ4C_RDbkEpLbwcevoK-Zx7HMfWyMBTAXKSLdKz6o-jD8EYV9mxRVumnFO2ujzeQ-M2zOitjG/pub?output=csv'  # 👈 अपना CSV लिंक यहाँ डालें
 
-# --- Web Server (बॉट को 24/7 जगाए रखने का देसी जुगाड़) ---
+# --- Web Server ---
 app = Flask(__name__)
 @app.route('/')
 def home():
@@ -42,6 +43,9 @@ active_polls = {}
 is_auto_posting = False 
 current_question_index = 0
 shuffled_questions = []
+
+# 👈 NAYA JUGAD: जो ग्रुप में कमांड आएगा, बॉट उसकी ID यहाँ सेव कर लेगा
+active_chat_id = None  
 
 # --- Google Sheet Fetcher ---
 def fetch_questions_from_sheet():
@@ -70,7 +74,8 @@ def is_user_admin(message):
     if message.from_user.username == 'GroupAnonymousBot': return True
     if message.sender_chat and message.sender_chat.id == message.chat.id: return True
     try:
-        return bot.get_chat_member(TARGET_GROUP, message.from_user.id).status in ['creator', 'administrator']
+        # 👈 अब बॉट फिक्स ग्रुप की जगह, करेंट ग्रुप (message.chat.id) में एडमिन चेक करेगा
+        return bot.get_chat_member(message.chat.id, message.from_user.id).status in ['creator', 'administrator']
     except:
         return False
 
@@ -92,7 +97,8 @@ def send_leaderboard(chat_id):
 # --- Admin Commands ---
 @bot.message_handler(commands=['start_quiz'])
 def start_auto_quiz(message):
-    global is_auto_posting, current_question_index, shuffled_questions
+    global is_auto_posting, current_question_index, shuffled_questions, active_chat_id
+    
     if not is_user_admin(message): return bot.reply_to(message, "❌ Access Denied!")
     if is_auto_posting: return bot.reply_to(message, "⚠️ क्विज़ चालू है!")
 
@@ -107,6 +113,10 @@ def start_auto_quiz(message):
 
     is_auto_posting = True
     current_question_index = 0
+    
+    # 👈 बॉट ने यहाँ चालू होने वाले ग्रुप की ID याद कर ली
+    active_chat_id = message.chat.id  
+    
     shuffled_questions = random.sample(fresh_questions, len(fresh_questions)) 
     bot.reply_to(message, f"✅ Auto-Quiz शुरू! कुल {len(shuffled_questions)} प्रश्न।\n\n📢 Join and Share: {PROMO_CHANNEL}")
 
@@ -116,13 +126,13 @@ def stop_auto_quiz(message):
     if not is_user_admin(message): return bot.reply_to(message, "❌ Access Denied!")
     is_auto_posting = False
     bot.reply_to(message, "🛑 Auto-Quiz रोक दिया गया है।")
-    send_leaderboard(TARGET_GROUP)
+    send_leaderboard(message.chat.id) # 👈 उसी ग्रुप में लीडरबोर्ड जाएगा
 
 # --- Auto Post Function ---
 def auto_send_quiz():
-    global is_auto_posting, current_question_index
+    global is_auto_posting, current_question_index, active_chat_id
     while True:
-        if is_auto_posting:
+        if is_auto_posting and active_chat_id is not None:
             time.sleep(5)
             while is_auto_posting and current_question_index < len(shuffled_questions):
                 try:
@@ -130,7 +140,8 @@ def auto_send_quiz():
                     promo_text = f"{q_data['explanation']}\n\n📢 Join {PROMO_CHANNEL}"
                     q_text = f"Q{current_question_index + 1}. {q_data['question']}"
                     
-                    msg = bot.send_poll(chat_id=TARGET_GROUP, question=q_text, options=q_data["options"], type='quiz', correct_option_id=q_data["correct_index"], explanation=promo_text, is_anonymous=False, open_period=30)
+                    # 👈 फिक्स ग्रुप की जगह active_chat_id का इस्तेमाल
+                    msg = bot.send_poll(chat_id=active_chat_id, question=q_text, options=q_data["options"], type='quiz', correct_option_id=q_data["correct_index"], explanation=promo_text, is_anonymous=False, open_period=30)
                     active_polls[msg.poll.id] = q_data["correct_index"]
                     current_question_index += 1
                 except Exception as e:
@@ -140,8 +151,8 @@ def auto_send_quiz():
                     time.sleep(1)
                 if is_auto_posting and current_question_index >= len(shuffled_questions):
                     is_auto_posting = False
-                    bot.send_message(TARGET_GROUP, "🏁 आज के सभी प्रश्न समाप्त हुए!")
-                    send_leaderboard(TARGET_GROUP)
+                    bot.send_message(active_chat_id, "🏁 आज के सभी प्रश्न समाप्त हुए!")
+                    send_leaderboard(active_chat_id)
                     break
         else: time.sleep(1)
 
@@ -167,8 +178,7 @@ def handle_poll_answer(pollAnswer):
 # --- Start Everything ---
 threading.Thread(target=auto_send_quiz, daemon=True).start()
 
-# Server start karna
 keep_alive()
 
-print("🌟 24/7 Bot Ready!")
+print("🌟 Smart 24/7 Bot Ready!")
 bot.polling(none_stop=True, allowed_updates=['message', 'poll', 'poll_answer'])
