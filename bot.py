@@ -8,11 +8,10 @@ import csv
 import io
 from flask import Flask
 
-# ⚠️ यहाँ अपना NAYA वाला Token डालें जो अभी BotFather से लिया था
+# अपना नया वाला Token यहाँ डालें
 TOKEN = '8632941188:AAFYQvnBUO8jhqvbE5MA_8M06q0daQ0_sjs' 
 bot = telebot.TeleBot(TOKEN)
 
-# अब TARGET_GROUP की कोई ज़रूरत नहीं!
 PROMO_CHANNEL = '@authentic_info_2025'       
 SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQaiENWJ4C_RDbkEpLbwcevoK-Zx7HMfWyMBTAXKSLdKz6o-jD8EYV9mxRVumnFO2ujzeQ-M2zOitjG/pub?output=csv'  # 👈 अपना CSV लिंक यहाँ डालें
 
@@ -29,9 +28,9 @@ def keep_alive():
     t = threading.Thread(target=run_server)
     t.start()
 
-# --- Database Setup ---
+# --- Database Setup (Thread Safe) ---
 def setup_db():
-    conn = sqlite3.connect('quiz_database.db')
+    conn = sqlite3.connect('quiz_database.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, name TEXT, score INTEGER)''')
     conn.commit()
@@ -43,8 +42,6 @@ active_polls = {}
 is_auto_posting = False 
 current_question_index = 0
 shuffled_questions = []
-
-# 👈 NAYA JUGAD: जो ग्रुप में कमांड आएगा, बॉट उसकी ID यहाँ सेव कर लेगा
 active_chat_id = None  
 
 # --- Google Sheet Fetcher ---
@@ -74,13 +71,12 @@ def is_user_admin(message):
     if message.from_user.username == 'GroupAnonymousBot': return True
     if message.sender_chat and message.sender_chat.id == message.chat.id: return True
     try:
-        # 👈 अब बॉट फिक्स ग्रुप की जगह, करेंट ग्रुप (message.chat.id) में एडमिन चेक करेगा
         return bot.get_chat_member(message.chat.id, message.from_user.id).status in ['creator', 'administrator']
     except:
         return False
 
 def send_leaderboard(chat_id):
-    conn = sqlite3.connect('quiz_database.db')
+    conn = sqlite3.connect('quiz_database.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("SELECT name, score FROM users ORDER BY score DESC LIMIT 10")
     top_users = cursor.fetchall()
@@ -105,7 +101,7 @@ def start_auto_quiz(message):
     fresh_questions = fetch_questions_from_sheet()
     if not fresh_questions: return bot.reply_to(message, "❌ शीट खाली है या लिंक गलत है!")
 
-    conn = sqlite3.connect('quiz_database.db')
+    conn = sqlite3.connect('quiz_database.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM users")  
     conn.commit()
@@ -113,10 +109,7 @@ def start_auto_quiz(message):
 
     is_auto_posting = True
     current_question_index = 0
-    
-    # 👈 बॉट ने यहाँ चालू होने वाले ग्रुप की ID याद कर ली
     active_chat_id = message.chat.id  
-    
     shuffled_questions = random.sample(fresh_questions, len(fresh_questions)) 
     bot.reply_to(message, f"✅ Auto-Quiz शुरू! कुल {len(shuffled_questions)} प्रश्न।\n\n📢 Join and Share: {PROMO_CHANNEL}")
 
@@ -126,9 +119,9 @@ def stop_auto_quiz(message):
     if not is_user_admin(message): return bot.reply_to(message, "❌ Access Denied!")
     is_auto_posting = False
     bot.reply_to(message, "🛑 Auto-Quiz रोक दिया गया है।")
-    send_leaderboard(message.chat.id) # 👈 उसी ग्रुप में लीडरबोर्ड जाएगा
+    send_leaderboard(message.chat.id)
 
-# --- Auto Post Function ---
+# --- Auto Post Function (BULLETPROOF VERSION) ---
 def auto_send_quiz():
     global is_auto_posting, current_question_index, active_chat_id
     while True:
@@ -138,22 +131,42 @@ def auto_send_quiz():
                 try:
                     q_data = shuffled_questions[current_question_index]
                     
-                    # 👈 यहाँ हमने 200 अक्षरों वाला नया सिस्टम लगाया है
-                    promo_text = f"{q_data['explanation']}\n📢 Join {PROMO_CHANNEL}"
-                    if len(promo_text) > 200:
-                        promo_text = promo_text[:197] + "..."
-                        
+                    # 1. सवाल की लम्बाई सेट करना (Max 280)
                     q_text = f"Q{current_question_index + 1}. {q_data['question']}"
-                    if len(q_text) > 300:
-                        q_text = q_text[:297] + "..."
+                    if len(q_text) > 280: q_text = q_text[:275] + "..."
                     
-                    msg = bot.send_poll(chat_id=active_chat_id, question=q_text, options=q_data["options"], type='quiz', correct_option_id=q_data["correct_index"], explanation=promo_text, is_anonymous=False, open_period=30)
-                    active_polls[msg.poll.id] = q_data["correct_index"]
+                    # 2. ऑप्शन्स की लम्बाई और खाली जगह सेट करना (Max 90)
+                    safe_options = []
+                    for opt in q_data["options"]:
+                        opt_str = str(opt).strip()
+                        if len(opt_str) > 90: opt_str = opt_str[:87] + "..."
+                        if not opt_str: opt_str = "None"
+                        safe_options.append(opt_str)
+                        
+                    # 3. एक्सप्लेनेशन की लम्बाई सेट करना (Max 150)
+                    promo_text = f"{q_data['explanation']}\n\n📢 Join {PROMO_CHANNEL}"
+                    if len(promo_text) > 150: promo_text = promo_text[:145] + "..."
+                    
+                    # 4. सही ऑप्शन को 0 से 3 के बीच रखना
+                    safe_corr_idx = max(0, min(3, int(q_data["correct_index"])))
+                    
+                    msg = bot.send_poll(
+                        chat_id=active_chat_id, 
+                        question=q_text, 
+                        options=safe_options, 
+                        type='quiz', 
+                        correct_option_id=safe_corr_idx, 
+                        explanation=promo_text, 
+                        is_anonymous=False, 
+                        open_period=30
+                    )
+                    active_polls[msg.poll.id] = safe_corr_idx
                     
                 except Exception as e:
-                    print(f"Error on question {current_question_index + 1}: {e}")
-                
-                # 👈 बॉट अब एरर आने पर अटकेगा नहीं, बल्कि अगले सवाल पर चला जाएगा
+                    print(f"Error on Q{current_question_index + 1}: {e}")
+                    # एरर आने पर बॉट रुकेगा नहीं, बल्कि ग्रुप में बता कर आगे बढ़ जाएगा
+                    bot.send_message(active_chat_id, f"⚠️ Q{current_question_index + 1} भेजने में सर्वर की समस्या आई। हम इसे छोड़कर अगले प्रश्न पर जा रहे हैं...")
+                    
                 finally:
                     current_question_index += 1
                     
@@ -178,7 +191,7 @@ def handle_poll_answer(pollAnswer):
     selected_option = pollAnswer.option_ids[0]
 
     if poll_id in active_polls and selected_option == active_polls[poll_id]:
-        conn = sqlite3.connect('quiz_database.db')
+        conn = sqlite3.connect('quiz_database.db', check_same_thread=False)
         cursor = conn.cursor()
         cursor.execute("SELECT score FROM users WHERE user_id = ?", (user_id,))
         result = cursor.fetchone()
@@ -192,5 +205,5 @@ threading.Thread(target=auto_send_quiz, daemon=True).start()
 
 keep_alive()
 
-print("🌟 Smart 24/7 Bot Ready!")
-bot.polling(none_stop=True, allowed_updates=['message', 'poll', 'poll_answer'])
+print("🌟 100% Bulletproof Bot Ready!")
+bot.infinity_polling(timeout=10, long_polling_timeout=5)
