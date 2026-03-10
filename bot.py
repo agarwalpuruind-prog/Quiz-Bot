@@ -137,18 +137,30 @@ def auto_send_quiz():
             while is_auto_posting and current_question_index < len(shuffled_questions):
                 try:
                     q_data = shuffled_questions[current_question_index]
-                    promo_text = f"{q_data['explanation']}\n\n📢 Join {PROMO_CHANNEL}"
-                    q_text = f"Q{current_question_index + 1}. {q_data['question']}"
                     
-                    # 👈 फिक्स ग्रुप की जगह active_chat_id का इस्तेमाल
+                    # 👈 यहाँ हमने 200 अक्षरों वाला नया सिस्टम लगाया है
+                    promo_text = f"{q_data['explanation']}\n📢 Join {PROMO_CHANNEL}"
+                    if len(promo_text) > 200:
+                        promo_text = promo_text[:197] + "..."
+                        
+                    q_text = f"Q{current_question_index + 1}. {q_data['question']}"
+                    if len(q_text) > 300:
+                        q_text = q_text[:297] + "..."
+                    
                     msg = bot.send_poll(chat_id=active_chat_id, question=q_text, options=q_data["options"], type='quiz', correct_option_id=q_data["correct_index"], explanation=promo_text, is_anonymous=False, open_period=30)
                     active_polls[msg.poll.id] = q_data["correct_index"]
-                    current_question_index += 1
+                    
                 except Exception as e:
-                    print(e)
+                    print(f"Error on question {current_question_index + 1}: {e}")
+                
+                # 👈 बॉट अब एरर आने पर अटकेगा नहीं, बल्कि अगले सवाल पर चला जाएगा
+                finally:
+                    current_question_index += 1
+                    
                 for _ in range(30):
                     if not is_auto_posting: break
                     time.sleep(1)
+                    
                 if is_auto_posting and current_question_index >= len(shuffled_questions):
                     is_auto_posting = False
                     bot.send_message(active_chat_id, "🏁 आज के सभी प्रश्न समाप्त हुए!")
