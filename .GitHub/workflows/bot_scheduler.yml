@@ -1,0 +1,19 @@
+name: Render Bot Scheduler
+
+on:
+  schedule:
+    - cron: '30 18 * * *' # Raat 12 baje band (IST)
+    - cron: '30 02 * * *' # Subah 8 baje chalu (IST)
+  workflow_dispatch:      # Manual chalu/band karne ka button
+
+jobs:
+  manage-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Command
+        run: |
+          HOUR=$(date +%H)
+          if [ $HOUR -eq 18 ]; then ACTION="suspend"; else ACTION="resume"; fi
+          
+          curl -X POST "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/$ACTION" \
+               -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}"
