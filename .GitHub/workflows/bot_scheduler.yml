@@ -2,18 +2,35 @@ name: Render Bot Scheduler
 
 on:
   schedule:
-    - cron: '30 18 * * *' # Raat 12 baje band (IST)
-    - cron: '30 02 * * *' # Subah 8 baje chalu (IST)
-  workflow_dispatch:      # Manual chalu/band karne ka button
+    # Raat 10:00 baje OFF karne ke liye (IST to UTC conversion)
+    - cron: '30 16 * * *'
+    # Subah 09:00 baje ON karne ke liye (IST to UTC conversion)
+    - cron: '30 03 * * *'
+  workflow_dispatch: # Manual button ke liye
 
 jobs:
   manage-bot:
     runs-on: ubuntu-latest
     steps:
-      - name: Send Command
+      - name: Execute Action
         run: |
+          # UTC Hour check kar rahe hain
           HOUR=$(date +%H)
-          if [ $HOUR -eq 18 ]; then ACTION="suspend"; else ACTION="resume"; fi
           
+          # Agar UTC 16:30 (Raat ke 10 PM IST) hai toh band karo
+          if [ $HOUR -eq 16 ]; then
+            ACTION="suspend"
+          # Agar UTC 03:30 (Subah ke 9 AM IST) hai toh shuru karo
+          elif [ $HOUR -eq 03 ]; then
+            ACTION="resume"
+          else
+            echo "Not scheduled for this hour. Current UTC hour: $HOUR"
+            exit 0
+          fi
+          
+          echo "Setting bot to: $ACTION"
+
+          # Render ko command bhej rahe hain
           curl -X POST "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/$ACTION" \
-               -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}"
+               -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+               -H "Accept: application/json"
